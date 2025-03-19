@@ -20,6 +20,9 @@ def get_stock_data(tickers, start_date, end_date):
 
     historical_data_combined = pd.concat(all_data)
     historical_data_combined.reset_index(inplace=True)
+
+    historical_data_combined.sort_values(by=["Ticker", "Date"], inplace=True)
+    
     return historical_data_combined
 
 # Fetch real-time features
