@@ -1,35 +1,20 @@
-from ingestion_pipeline.ingestion_controller import handle_data_request
-from ingestion_pipeline.macro_fetch import get_risk_free_rate
-from chatbot_utils import parse_query, generate_follow_up
+from chatbot.chatbot_utils import extract_intent_and_entities
+from chatbot.validator import validate_fields
+from chatbot.intent_router import route_intent
 
-def process_chatbot_request(user_query):
-    """
-    Handles the chatbot query, processes input, fetches/ingests data, and returns results.
-    """
-    parsed_data = parse_query(user_query)
+def process_user_query(user_query: str):
+    extraction_result = extract_intent_and_entities(user_query)
 
-    ticker = parsed_data.get("underlying_stock")
-    start_date = parsed_data.get("start_date", "2024-01-01")
-    end_date = parsed_data.get("end_date", "2024-12-31")
+    if "error" in extraction_result:
+        return extraction_result
 
-    if not ticker:
-        return {"error": "Could not extract ticker from the query."}
+    intent = extraction_result.get('intent')
+    entities = extraction_result.get('entities')
 
-    # Step 1: Get data from cache/db/ingestion
-    stock_data = handle_data_request(ticker, start_date, end_date)
+    validated_data, validation_errors = validate_fields(entities)
 
-    # Step 2: Risk-free rate
-    risk_free_rate = get_risk_free_rate()
+    if validation_errors:
+        return {"error": "Validation failed", "details": validation_errors}
 
-    # Step 3: Prepare chatbot response
-    latest_price = stock_data['Close'].iloc[-1]
-
-    follow_up = generate_follow_up(parsed_data)
-
-    return {
-        "ticker": ticker,
-        "latest_price": latest_price,
-        "risk_free_rate": risk_free_rate,
-        "follow_up": follow_up,
-        "parsed_data": parsed_data
-    }
+    result = route_intent(intent, validated_data)
+    return result
