@@ -1,32 +1,40 @@
 import openai
-from prompts import EXTRACTION_PROMPT, FOLLOW_UP_PROMPT
+import json
 
-openai.api_key = "your_openai_api_key"
-
-def parse_query(user_query):
-    prompt = EXTRACTION_PROMPT.format(query=user_query)
+def call_gpt(prompt: str, temperature=0.0):
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-        max_tokens=300
+        temperature=temperature
     )
-    content = response.choices[0].message['content']
+    return response['choices'][0]['message']['content']
 
-    import json
+def extract_intent_and_entities(user_query: str):
+    prompt = f"""
+    You are an AI assistant for an American Options Pricing chatbot.
+
+    Extract:
+    1. intent: Choose from ["option_price_prediction", "exercise_probability", "forecasting"]
+    2. entities: such as underlying_asset, expiry_date, strike_price, option_type (call/put)
+
+    Return as JSON. Example:
+    {{
+        "intent": "option_price_prediction",
+        "entities": {{
+            "underlying_asset": "TSLA",
+            "expiry_date": "2025-06-21",
+            "strike_price": 700,
+            "option_type": "call"
+        }}
+    }}
+
+    User Query: "{user_query}"
+    """
+
+    response_str = call_gpt(prompt)
+    
     try:
-        extracted_data = json.loads(content)
+        response_json = json.loads(response_str)
+        return response_json
     except json.JSONDecodeError:
-        print("Failed to parse JSON. Check prompt output.")
-        extracted_data = {}
-    return extracted_data
-
-def generate_follow_up(extracted_data):
-    prompt = FOLLOW_UP_PROMPT.format(extracted_data=extracted_data)
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        max_tokens=300
-    )
-    return response.choices[0].message['content']
+        return {"error": "Failed to parse GPT response", "raw_response": response_str}
