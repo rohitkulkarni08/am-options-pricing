@@ -2,65 +2,80 @@ import openai
 import json
 import textwrap
 
-def call_gpt(prompt: str, temperature=0.0):
+def json_parser(gpt_output):
+    if isinstance(gpt_output, dict):
+        return gpt_output
+
+    # Remove ```json ... ``` wrappers
+    cleaned = re.sub(r"^```json\s*|\s*```$", "", gpt_output.strip(), flags=re.IGNORECASE)
+
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=temperature
-        )
-        return response['choices'][0]['message']['content']
+        return json.loads(cleaned)
     except Exception as e:
-        print(f"❌ GPT API call failed: {e}")
-        return None
+        print("JSON parse failed:", e)
+        return {"error": "Failed to parse", "raw": gpt_output}
+
+def call_gpt(prompt: str, temperature = 0.0):
+    """
+    Function to score the resume based on the job description using GPT model
+    :param resume_text: Resume text
+    :param job_description: Job description text
+    :return: Score for the resume
+    """
+    response = openai.ChatCompletion.create(
+            model= "gpt-4o",
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            max_tokens = 512,
+            temperature = 0
+    )
+    gpt_output = response.choices[0].message.content.strip()
+    return json_parser(gpt_output)
 
 def extract_intent_and_entities(user_query: str):
     """
     Uses GPT to extract intent and entities from the user's query.
     Returns a dictionary with intent and mapped entities.
     """
-    
-    raw_prompt = '''
+    raw_prompt = f'''
     You are an AI assistant for an American Options Pricing chatbot.
 
-    Extract:
-    1. intent: Choose from ["option_price_prediction", "exercise_probability", "forecasting"]
-    2. entities: including underlying_asset (Ticker), expiry_date, strike_price, option_type (call/put)
+    Extract the following fields as a **flat JSON** object:
+    - intent: Choose from ["option_price_prediction", "exercise_probability", "forecasting"]
+    - underlying_asset: the stock ticker (e.g., AAPL)
+    - expiry_date: the option expiry date (ISO format)
+    - strike_price: numeric
+    - spot_price: numeric (optional)
+    - option_type: "call" or "put"
+    - interest rate: numeric (optional)
+    - volatility: numeric (optional)
 
-    Return in JSON format like this:
-    {
-        "intent": "option_price_prediction",
-        "entities": {
-            "underlying_asset": "TSLA",
-            "expiry_date": "2025-06-21",
-            "strike_price": 700,
-            "option_type": "call"
-        }
-    }
-
-    User Query: "{user_query}"
+    User Query: {user_query}
+    The output should strictly follow the JSON format and should not contain any additional information. No additional information, comments, suggestions should be included in the output. JSON output:"""
     '''
 
-    prompt = textwrap.dedent(raw_prompt).strip().format(user_query=user_query)
+    response_json = call_gpt(raw_prompt)
 
-    response_str = call_gpt(prompt)
-
-    if not response_str:
+    if not response_json:
         return {"error": "No response from GPT"}
 
     try:
-        response_json = json.loads(response_str)
-
         # Validate and map GPT output to internal schema
-        intent = response_json.get("intent", "").strip()
-        entities = response_json.get("entities", {})
+        intent = response_json.get("intent")
 
         # Normalize entities
         mapped_entities = {
-            "Ticker": entities.get("underlying_asset"),
-            "expiry_date": entities.get("expiry_date"),
-            "K": entities.get("strike_price"),
-            "option_type": map_option_type(entities.get("option_type"))
+            "Ticker": response_json.get("underlying_asset"),
+            "expiry_date": response_json.get("expiry_date"),
+            "K": response_json.get("strike_price"),
+            "S0": response_json.get("spot_price"),
+            "option_type": map_option_type(response_json.get("option_type")),
+            "r": response_json.get("interest_rate"),
+            "volatility": response_json.get("volatility")
         }
 
         return {
@@ -69,8 +84,8 @@ def extract_intent_and_entities(user_query: str):
         }
 
     except json.JSONDecodeError:
-        print("❌ Failed to parse GPT response")
-        return {"error": "Failed to parse GPT response", "raw_response": response_str}
+        print("Failed to parse GPT response")
+        return {"error": "Failed to parse GPT response", "raw_response": response_json}
 
 def map_option_type(option_type_str):
     """
